@@ -49,8 +49,8 @@ void *procselfmemThread(void *arg)
      * You have to write to /proc/self/mem :: https://bugzilla.redhat.com/show_bug.cgi?id=1384344#c16
      * The in the wild exploit we are aware of doesn't work on Red Hat
      * Enterprise Linux 5 and 6 out of the box because on one side of
-     *the race it writes to /proc/self/mem, but /proc/self/mem is not
-     *writable on Red Hat Enterprise Linux 5 and 6.
+     * the race it writes to /proc/self/mem, but /proc/self/mem is not
+     * writable on Red Hat Enterprise Linux 5 and 6.
      */
     
     int f = open("/proc/self/mem", O_RDWR);
@@ -86,7 +86,7 @@ int main(int argc, char *argv[])
      * mapping are not visible to other processes mapping the same
      * file, and are not carried through to the underlying file.  It
      * is unspecified whether changes made to the file after the
-     *mmap() call are visible in the mapped region.
+     * mmap() call are visible in the mapped region.
      */
 
     // You have to open with PROT_READ.

